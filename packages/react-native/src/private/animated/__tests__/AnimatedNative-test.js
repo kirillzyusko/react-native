@@ -31,6 +31,11 @@ describe('Native Animated', () => {
     };
   }
 
+  function createViewInstance(): React.ElementRef<React.ElementType> {
+    // $FlowFixMe[incompatible-type]
+    return {};
+  }
+
   beforeEach(() => {
     jest.resetModules();
     jest.restoreAllMocks();
@@ -1630,8 +1635,8 @@ describe('Native Animated', () => {
       const {Animated} = importModules();
       const AnimatedProps =
         require('../../../../Libraries/Animated/nodes/AnimatedProps').default;
-      const firstView = {};
-      const secondView = {};
+      const firstView = createViewInstance();
+      const secondView = createViewInstance();
       const opacity = new Animated.Value(1);
       const propsNode = new AnimatedProps({style: {opacity}}, jest.fn());
       propsNode.__attach();
@@ -1685,8 +1690,8 @@ describe('Native Animated', () => {
       const opacity = new Animated.Value(1);
       const propsNode = new AnimatedProps({style: {opacity}}, jest.fn());
       propsNode.__attach();
-      propsNode.setNativeView({});
-      propsNode.setNativeView({});
+      propsNode.setNativeView(createViewInstance());
+      propsNode.setNativeView(createViewInstance());
       expect(
         NativeAnimatedModule.connectAnimatedNodeToView,
       ).not.toHaveBeenCalled();
