@@ -44,6 +44,7 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
+import android.view.ViewTreeObserver
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
@@ -162,7 +163,53 @@ public open class ReactEditText public constructor(context: Context) : AppCompat
 
   private var wasMultiline = false
 
+  private var isTextChanging = false
+  private var pendingStateEventCount = 0
+
   public var stateWrapper: StateWrapper? = null
+
+  internal fun deferScrollUntilStateUpdate(eventCount: Int) {
+    pendingStateEventCount = eventCount
+  }
+
+  internal fun onStateUpdated(eventCount: Int) {
+    if (pendingStateEventCount != 0 && eventCount >= pendingStateEventCount) {
+      pendingStateEventCount = 0
+      // Yoga may leave the bounds unchanged for a height-constrained input, so no layout()
+      // follows this state update. Complete Android's deferred caret scroll before the frame
+      // that mounts this update is drawn; by then Fabric has applied any new bounds.
+      flushDeferredScrollBeforeDraw()
+    }
+  }
+
+  private var deferredScrollFlushPending = false
+
+  /**
+   * TextView stores the caret offset it could not scroll to while a layout was requested and only
+   * consumes it in onLayout(). Re-run that step with the current bounds.
+   */
+  private fun flushDeferredScroll() {
+    super.onLayout(false, left, top, right, bottom)
+  }
+
+  private fun flushDeferredScrollBeforeDraw() {
+    if (deferredScrollFlushPending) {
+      return
+    }
+    deferredScrollFlushPending = true
+    viewTreeObserver.addOnPreDrawListener(
+        object : ViewTreeObserver.OnPreDrawListener {
+          override fun onPreDraw(): Boolean {
+            viewTreeObserver.removeOnPreDrawListener(this)
+            deferredScrollFlushPending = false
+            flushDeferredScroll()
+            return true
+          }
+        }
+    )
+    invalidate()
+  }
+
   internal var disableTextDiffing: Boolean = false
   protected var isSettingTextFromState: Boolean = false
 
@@ -317,15 +364,17 @@ public open class ReactEditText public constructor(context: Context) : AppCompat
     TextLayoutManager.deleteCachedSpannableForTag(id)
   }
 
-  // After the text changes inside an EditText, TextView checks if a layout() has been requested.
-  // If it has, it will not scroll the text to the end of the new text inserted, but wait for the
-  // next layout() to be called. However, we do not perform a layout() after a requestLayout(), so
-  // we need to override isLayoutRequested to force EditText to scroll to the end of the new text
-  // immediately.
+  // React parents do not fulfill every requestLayout(), so Android's layout flag cannot be used
+  // to defer caret scrolling. Only defer while Fabric is applying the dimensions from a native
+  // text change; otherwise preserve immediate scrolling for constrained inputs and selection.
   // TODO: t6408636 verify if we should schedule a layout after a View does a requestLayout()
-  override fun isLayoutRequested(): Boolean = false
+  // Single-line inputs never change size because of a text change, so their caret scroll
+  // stays immediate.
+  override fun isLayoutRequested(): Boolean =
+      isMultiline && (isTextChanging || pendingStateEventCount != 0)
 
   override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+    super.onLayout(changed, left, top, right, bottom)
     onContentSizeChange()
     if (selectTextOnFocus && isFocused) {
       // Explicitly call this method to select text when layout is drawn
@@ -1318,6 +1367,9 @@ public open class ReactEditText public constructor(context: Context) : AppCompat
    */
   private inner class TextWatcherDelegator : TextWatcher {
     override fun beforeTextChanged(s: CharSequence, start: Int, count: Int, after: Int) {
+      // Only a user-driven change dispatches a Fabric state update that will complete the
+      // deferred caret scroll; text set from JS/state is laid out in the same mount already.
+      isTextChanging = stateWrapper != null && !isSettingTextFromJS && !disableTextDiffing
       if (!isSettingTextFromJS) {
         listeners?.forEach { listener -> listener.beforeTextChanged(s, start, count, after) }
       }
@@ -1332,6 +1384,14 @@ public open class ReactEditText public constructor(context: Context) : AppCompat
         listeners?.forEach { listener -> listener.onTextChanged(s, start, before, count) }
       }
 
+      if (isTextChanging) {
+        isTextChanging = false
+        if (pendingStateEventCount == 0) {
+          // No state update was dispatched for this change (e.g. the text did not actually
+          // change), so nothing will relayout the view: scroll to the caret now.
+          flushDeferredScroll()
+        }
+      }
       updateCachedSpannable()
 
       onContentSizeChange()

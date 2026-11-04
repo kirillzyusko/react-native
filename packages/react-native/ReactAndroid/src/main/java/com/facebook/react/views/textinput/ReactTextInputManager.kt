@@ -1017,6 +1017,7 @@ public open class ReactTextInputManager public constructor() :
 
     val stateMapBuffer: MapBuffer? = stateWrapper.stateDataMapBuffer
     if (stateMapBuffer != null) {
+      view.onStateUpdated(stateMapBuffer.getInt(TX_STATE_KEY_MOST_RECENT_EVENT_COUNT.toInt()))
       return getReactTextUpdate(view, props, stateMapBuffer)
     }
 
@@ -1028,9 +1029,8 @@ public open class ReactTextInputManager public constructor() :
       props: ReactStylesDiffMap,
       state: MapBuffer,
   ): Any? {
-    // If native wants to update the state wrapper but the state data hasn't actually
-    // changed, the MapBuffer may be empty
-    if (state.count == 0) {
+    // Native text updates only acknowledge the event count; they do not replace the text.
+    if (!state.contains(TX_STATE_KEY_ATTRIBUTED_STRING.toInt())) {
       return null
     }
 

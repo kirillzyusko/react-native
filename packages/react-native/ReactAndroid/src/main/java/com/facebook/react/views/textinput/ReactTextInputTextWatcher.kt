@@ -50,8 +50,10 @@ internal class ReactTextInputTextWatcher(
 
     if (stateWrapper != null) {
       val newStateData: WritableMap = WritableNativeMap()
-      newStateData.putInt("mostRecentEventCount", editText.incrementAndGetEventCounter())
+      val eventCount = editText.incrementAndGetEventCounter()
+      newStateData.putInt("mostRecentEventCount", eventCount)
       newStateData.putInt("opaqueCacheId", editText.id)
+      editText.deferScrollUntilStateUpdate(eventCount)
       stateWrapper.updateState(newStateData)
     }
 
